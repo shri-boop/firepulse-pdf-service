@@ -1,18 +1,29 @@
-# Firepulse PDF Extraction Service
+# Firepulse Document Extraction Service
 
-Flask-based microservice for extracting text from PDF files.
+Comprehensive microservice for extracting text from PDFs and Excel files.
+
+## Features
+
+### PDF Extraction
+- Text extraction with layout preservation
+- Table structure extraction
+- OCR for scanned PDFs
+- Multi-column layout handling
+
+### Excel Extraction (.xls, .xlsx)
+- Multi-sheet extraction
+- Table structure preservation
+- Formula and value extraction
+- Merged cell handling
+- Date and number formatting
 
 ## API Endpoints
 
 ### POST /extract-pdf
 
-Extract text from a PDF file.
+Extract text from PDF files.
 
-**Headers:**
-- `X-API-Key`: Your API key
-- `Content-Type`: application/json
-
-**Body:**
+**Request:**
 ```json
 {
   "file_base64": "base64_encoded_pdf_content"
@@ -23,27 +34,41 @@ Extract text from a PDF file.
 ```json
 {
   "success": true,
-  "text": "Full extracted text...",
+  "text": "Extracted text...",
   "total_pages": 2,
   "total_chars": 6543,
-  "pages": [...]
+  "extraction_method": "pdfplumber"
+}
+```
+
+### POST /extract-excel
+
+Extract text from Excel files (.xls, .xlsx).
+
+**Request:**
+```json
+{
+  "file_base64": "base64_encoded_excel_content",
+  "file_extension": ".xlsx"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "text": "Extracted text...",
+  "total_sheets": 3,
+  "total_chars": 4521,
+  "sheets": [...]
 }
 ```
 
 ## Environment Variables
 
-- `API_KEY`: API key for authentication (default: fp_pdf_service_2026_key)
+- `API_KEY`: API key for authentication
 - `PORT`: Port to run the service (default: 5000)
 
-## Local Testing
-```bash
-pip install -r requirements.txt
-python app.py
-```
+## Deployment
 
-## Deploy to Render
-
-1. Push to GitHub
-2. Connect Render to your repo
-3. Set environment variable: `API_KEY`
-4. Deploy
+Designed for Render.com deployment with automatic detection.
