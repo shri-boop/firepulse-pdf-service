@@ -19,7 +19,7 @@ CORS(app)
 # SECURITY - API KEY
 # =============================
 
-API_KEY = os.environ.get('API_KEY', 'fp_document_service_2026_key')
+API_KEY = os.environ.get('API_KEY', 'fp_pdf_service_2026_secure_key_xyz123')
 
 def require_api_key(f):
     @wraps(f)
@@ -45,18 +45,19 @@ def health_check():
     return jsonify({
         'status': 'active',
         'service': 'Firepulse Document Extraction Service',
-        'version': '2.0.0',
+        'version': '2.1.0',
         'capabilities': [
             'PDF text extraction with layout preservation',
             'PDF table structure extraction',
             'OCR for scanned PDFs',
-            'Excel (.xls, .xlsx) multi-sheet extraction',
+            'Excel (.xls, .xlsx) FULL multi-sheet extraction',
             'Excel formula and value extraction',
-            'Excel merged cell handling'
+            'Excel merged cell handling',
+            'Complete row extraction (no truncation)'
         ],
         'endpoints': {
             'POST /extract-pdf': 'Extract text from PDF files',
-            'POST /extract-excel': 'Extract text from Excel files (.xls, .xlsx)'
+            'POST /extract-excel': 'Extract text from Excel files (.xls, .xlsx) - ALL sheets, ALL rows'
         }
     })
 
@@ -114,133 +115,134 @@ def extract_tables_from_page(page):
     return table_text
 
 # =============================
-# HELPER: FORMAT EXCEL CELL VALUE
+# HELPER: EXTRACT XLSX - ALL SHEETS, ALL ROWS
 # =============================
 
-def format_excel_value(cell, include_formula=False):
-    """Format Excel cell value with type handling"""
-    if cell is None:
-        return ''
-    
-    # Handle different cell types
-    if isinstance(cell, (int, float)):
-        return str(cell)
-    elif isinstance(cell, datetime):
-        return cell.strftime('%Y-%m-%d %H:%M:%S')
-    elif isinstance(cell, bool):
-        return 'TRUE' if cell else 'FALSE'
-    else:
-        return str(cell).strip()
-
-# =============================
-# HELPER: EXTRACT XLSX (OpenPyXL)
-# =============================
-
-def extract_xlsx(file_bytes):
-    """Extract all sheets from .xlsx file"""
+def extract_xlsx_full(file_bytes):
+    """Extract ALL sheets and ALL rows from XLSX file - NO TRUNCATION"""
     try:
-        workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
-        sheets_data = []
-        full_text = ''
+        workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=False)
         
-        for sheet_name in workbook.sheetnames:
+        all_text_parts = []
+        sheets_data = []
+        total_rows_extracted = 0
+        
+        # Process EVERY sheet
+        for sheet_idx, sheet_name in enumerate(workbook.sheetnames, 1):
             sheet = workbook[sheet_name]
-            sheet_text = f"\n{'='*50}\n[SHEET: {sheet_name}]\n{'='*50}\n"
             
-            # Get dimensions
-            max_row = sheet.max_row
-            max_col = sheet.max_column
+            # Sheet header
+            sheet_header = f"\n{'='*60}\n[SHEET {sheet_idx}: {sheet_name}]\n{'='*60}\n"
+            all_text_parts.append(sheet_header)
             
-            if max_row == 0 or max_col == 0:
-                sheet_text += "(Empty sheet)\n"
+            # Get actual data range (not max which can be misleading)
+            rows_list = list(sheet.iter_rows(values_only=True))
+            
+            if not rows_list or len(rows_list) == 0:
+                all_text_parts.append("(Empty sheet)\n")
                 continue
             
-            # Extract as table
-            rows_data = []
-            for row in sheet.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
-                row_values = []
-                for cell in row:
-                    # Get cell value
-                    value = format_excel_value(cell.value)
-                    
-                    # Optionally get formula if exists
-                    if cell.data_type == 'f' and cell.value:
-                        formula = str(cell.value) if hasattr(cell, 'value') else ''
-                        value = f"{value} (Formula: {formula})"
-                    
-                    row_values.append(value)
-                
-                rows_data.append(row_values)
+            # Extract header row
+            headers = [str(cell) if cell is not None else '' for cell in rows_list[0]]
+            header_line = "Columns: " + " | ".join(headers) + "\n"
+            all_text_parts.append(header_line)
+            all_text_parts.append("-" * 80 + "\n")
             
-            # Format as table
-            if rows_data:
-                # Assume first row is header
-                headers = rows_data[0]
-                sheet_text += "Columns: " + " | ".join(headers) + "\n"
-                sheet_text += "-" * 80 + "\n"
-                
-                # Add data rows
-                for row_idx, row in enumerate(rows_data[1:], start=2):
-                    row_text = " | ".join(row)
-                    sheet_text += f"Row {row_idx}: {row_text}\n"
+            # Extract ALL data rows (no limit)
+            row_count = 0
+            for row_idx, row in enumerate(rows_list[1:], start=2):
+                row_values = [str(cell) if cell is not None else '' for cell in row]
+                row_line = f"Row {row_idx}: " + " | ".join(row_values) + "\n"
+                all_text_parts.append(row_line)
+                row_count += 1
             
-            sheet_text += f"\n(Sheet has {max_row} rows, {max_col} columns)\n"
+            total_rows_extracted += row_count
+            
+            # Sheet summary
+            summary = f"\n(Sheet '{sheet_name}': {row_count} data rows extracted)\n"
+            all_text_parts.append(summary)
             
             sheets_data.append({
                 'sheet_name': sheet_name,
-                'text': sheet_text,
-                'rows': max_row,
-                'cols': max_col
+                'rows_extracted': row_count,
+                'columns': len(headers)
             })
-            
-            full_text += sheet_text + "\n"
+        
+        workbook.close()
+        
+        full_text = "".join(all_text_parts)
         
         return {
-            'full_text': full_text,
+            'text': full_text,
+            'total_sheets': len(workbook.sheetnames),
+            'total_rows': total_rows_extracted,
             'sheets': sheets_data,
-            'total_sheets': len(sheets_data)
+            'extraction_method': 'openpyxl_full'
         }
     
     except Exception as e:
         raise Exception(f'XLSX extraction failed: {str(e)}')
 
 # =============================
-# HELPER: EXTRACT XLS (xlrd)
+# HELPER: EXTRACT XLS - ALL SHEETS, ALL ROWS
 # =============================
 
-def extract_xls(file_bytes):
-    """Extract all sheets from .xls file"""
+def extract_xls_full(file_bytes):
+    """Extract ALL sheets and ALL rows from XLS file - NO TRUNCATION"""
     try:
         workbook = xlrd.open_workbook(file_contents=file_bytes, formatting_info=False)
-        sheets_data = []
-        full_text = ''
         
+        all_text_parts = []
+        sheets_data = []
+        total_rows_extracted = 0
+        
+        # Process EVERY sheet
         for sheet_idx in range(workbook.nsheets):
             sheet = workbook.sheet_by_index(sheet_idx)
             sheet_name = sheet.name
-            sheet_text = f"\n{'='*50}\n[SHEET: {sheet_name}]\n{'='*50}\n"
             
-            if sheet.nrows == 0 or sheet.ncols == 0:
-                sheet_text += "(Empty sheet)\n"
+            # Sheet header
+            sheet_header = f"\n{'='*60}\n[SHEET {sheet_idx + 1}: {sheet_name}]\n{'='*60}\n"
+            all_text_parts.append(sheet_header)
+            
+            if sheet.nrows == 0:
+                all_text_parts.append("(Empty sheet)\n")
                 continue
             
-            # Extract as table
-            rows_data = []
-            for row_idx in range(sheet.nrows):
+            # Extract header row (row 0)
+            headers = []
+            for col_idx in range(sheet.ncols):
+                cell = sheet.cell(0, col_idx)
+                headers.append(str(cell.value) if cell.value else '')
+            
+            header_line = "Columns: " + " | ".join(headers) + "\n"
+            all_text_parts.append(header_line)
+            all_text_parts.append("-" * 80 + "\n")
+            
+            # Extract ALL data rows (starting from row 1, no limit)
+            row_count = 0
+            for row_idx in range(1, sheet.nrows):  # Start at 1, go to ALL rows
                 row_values = []
                 for col_idx in range(sheet.ncols):
                     cell = sheet.cell(row_idx, col_idx)
                     
-                    # Handle different cell types
+                    # Handle different cell types properly
                     if cell.ctype == xlrd.XL_CELL_EMPTY:
                         value = ''
                     elif cell.ctype == xlrd.XL_CELL_TEXT:
                         value = str(cell.value)
                     elif cell.ctype == xlrd.XL_CELL_NUMBER:
-                        value = str(cell.value)
+                        # Format numbers properly
+                        if cell.value == int(cell.value):
+                            value = str(int(cell.value))
+                        else:
+                            value = str(cell.value)
                     elif cell.ctype == xlrd.XL_CELL_DATE:
-                        date_tuple = xlrd.xldate_as_tuple(cell.value, workbook.datemode)
-                        value = f"{date_tuple[0]}-{date_tuple[1]:02d}-{date_tuple[2]:02d}"
+                        try:
+                            date_tuple = xlrd.xldate_as_tuple(cell.value, workbook.datemode)
+                            value = f"{date_tuple[0]}-{date_tuple[1]:02d}-{date_tuple[2]:02d}"
+                        except:
+                            value = str(cell.value)
                     elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
                         value = 'TRUE' if cell.value else 'FALSE'
                     else:
@@ -248,42 +250,37 @@ def extract_xls(file_bytes):
                     
                     row_values.append(value)
                 
-                rows_data.append(row_values)
+                row_line = f"Row {row_idx + 1}: " + " | ".join(row_values) + "\n"
+                all_text_parts.append(row_line)
+                row_count += 1
             
-            # Format as table
-            if rows_data:
-                # First row as header
-                headers = rows_data[0]
-                sheet_text += "Columns: " + " | ".join(headers) + "\n"
-                sheet_text += "-" * 80 + "\n"
-                
-                # Data rows
-                for row_idx, row in enumerate(rows_data[1:], start=2):
-                    row_text = " | ".join(row)
-                    sheet_text += f"Row {row_idx}: {row_text}\n"
+            total_rows_extracted += row_count
             
-            sheet_text += f"\n(Sheet has {sheet.nrows} rows, {sheet.ncols} columns)\n"
+            # Sheet summary
+            summary = f"\n(Sheet '{sheet_name}': {row_count} data rows extracted)\n"
+            all_text_parts.append(summary)
             
             sheets_data.append({
                 'sheet_name': sheet_name,
-                'text': sheet_text,
-                'rows': sheet.nrows,
-                'cols': sheet.ncols
+                'rows_extracted': row_count,
+                'columns': sheet.ncols
             })
-            
-            full_text += sheet_text + "\n"
+        
+        full_text = "".join(all_text_parts)
         
         return {
-            'full_text': full_text,
+            'text': full_text,
+            'total_sheets': workbook.nsheets,
+            'total_rows': total_rows_extracted,
             'sheets': sheets_data,
-            'total_sheets': len(sheets_data)
+            'extraction_method': 'xlrd_full'
         }
     
     except Exception as e:
         raise Exception(f'XLS extraction failed: {str(e)}')
 
 # =============================
-# ENDPOINT: EXTRACT PDF
+# ENDPOINT: EXTRACT PDF (UNCHANGED - WORKING PERFECTLY)
 # =============================
 
 @app.route('/extract-pdf', methods=['POST'])
@@ -368,7 +365,7 @@ def extract_pdf():
         }), 500
 
 # =============================
-# ENDPOINT: EXTRACT EXCEL
+# ENDPOINT: EXTRACT EXCEL - FULL MULTI-SHEET EXTRACTION
 # =============================
 
 @app.route('/extract-excel', methods=['POST'])
@@ -383,7 +380,7 @@ def extract_excel():
                 'message': 'Missing file_base64 in request body'
             }), 400
         
-        # Get file type
+        # Get file extension
         file_extension = data.get('file_extension', '.xlsx').lower()
         
         # Decode base64
@@ -399,17 +396,18 @@ def extract_excel():
         
         # Extract based on file type
         if file_extension == '.xls':
-            result = extract_xls(file_bytes)
+            result = extract_xls_full(file_bytes)
         else:  # .xlsx
-            result = extract_xlsx(file_bytes)
+            result = extract_xlsx_full(file_bytes)
         
         return jsonify({
             'success': True,
-            'text': result['full_text'],
+            'text': result['text'],
             'total_sheets': result['total_sheets'],
-            'total_chars': len(result['full_text']),
+            'total_rows': result['total_rows'],
+            'total_chars': len(result['text']),
             'sheets': result['sheets'],
-            'extraction_method': 'openpyxl' if file_extension == '.xlsx' else 'xlrd',
+            'extraction_method': result['extraction_method'],
             'metadata': {
                 'file_size_bytes': len(file_bytes),
                 'file_extension': file_extension
