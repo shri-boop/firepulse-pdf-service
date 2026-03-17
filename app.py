@@ -19,7 +19,7 @@ CORS(app)
 # SECURITY - API KEY
 # =============================
 
-API_KEY = os.environ.get('API_KEY', 'fp_pdf_service_2026_secure_key_xyz123')
+API_KEY = os.environ.get('API_KEY', 'arvami_extraction_service_2026_master_key')
 
 def require_api_key(f):
     @wraps(f)
